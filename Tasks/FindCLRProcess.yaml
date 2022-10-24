@@ -1,0 +1,89 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: FindCLRProcess
+  Aliases: []
+  Description: Enumerate through all running processes to find those that have a CLR loaded.
+  Help: >-
+    Returns the PID, ModuleName and ProcessName of the processes.
+
+
+    Enumerates through all running processes to find those that have the required DLL ("clr.dll") loaded. This is simply done via Process.GetProcesses() and Modules.
+
+    The name does not have to be an exact match, so check if the returned ModuleName fits your needs!
+
+    The iteration stops after the first match for performance reasons! Remove line 25 in the task's source code if you want to return all possible matches.
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net35
+  - Net40
+  Code: >-
+    using System;
+
+    using System.IO;
+
+    using System.Diagnostics;
+
+
+    public static class Task
+
+    {
+        public static string Execute()
+        {
+            string output = " PID    | ModuleName       | ProcessName                        \n---------------------------------------------------------------\n";
+            try
+            {
+                Process[] processlist = Process.GetProcesses();
+                foreach (Process theprocess in processlist)
+                {
+                    try
+                    {
+                        ProcessModuleCollection myProcessModuleCollection = theprocess.Modules;
+                        ProcessModule myProcessModule;
+                        for (int i = 0; i < myProcessModuleCollection.Count; i++)
+                        {
+                            myProcessModule = myProcessModuleCollection[i];
+                            if (myProcessModule.ModuleName.Contains("clr.dll"))
+                            {
+                                output += theprocess.Id.ToString().PadRight(7) + "| " + myProcessModule.ModuleName.ToString().PadRight(17) + "| " + theprocess.ProcessName + "\n";
+                                i = myProcessModuleCollection.Count;
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        continue;
+                    }
+                }
+                return output;
+            }
+            catch (Exception e) { return e.GetType().FullName + ": " + e.Message + Environment.NewLine + e.StackTrace; }
+        }
+    }
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options: []
