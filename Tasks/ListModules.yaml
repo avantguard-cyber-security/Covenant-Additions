@@ -1,0 +1,51 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: ListModules
+  Aliases: []
+  Description: Enumerates the loaded modules of a specified process.
+  Help: >-
+    Returns a list of the loaded modules in the specified process.
+
+    This is simply done via Process.GetProcessById() and Modules.
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net35
+  - Net40
+  Code: "using System;\nusing System.IO;\nusing System.Diagnostics;\n\npublic static class Task\n{\n    public static string Execute(string ProcessId)\n    {\n        int pid = int.Parse(ProcessId);\n        string output = \"\";\n        try\n        {\n            ProcessModuleCollection myProcessModuleCollection = Process.GetProcessById(pid).Modules;\n            ProcessModule myProcessModule;\n            \n            output = \" Process \" + pid + \" loaded the following \" + myProcessModuleCollection.Count + \" modules:\\n----------------------------------------------------\\n\";\n\n            for (int i = 0; i < myProcessModuleCollection.Count; i++)\n            {\n                myProcessModule = myProcessModuleCollection[i];\n                output += \" - BaseAddress    : 0x\" + myProcessModule.BaseAddress.ToString(\"X16\") + \"\\n\";\n                output += \" - ModuleName     : \" + myProcessModule.ModuleName + \"\\n\";\n                output += \" - FileName       : \" + myProcessModule.FileName + \"\\n\\n\";\n             }\n             return output;\n        }\n        catch (Exception e) { return e.GetType().FullName + \": \" + e.Message + Environment.NewLine + e.StackTrace; }\n    }\n}"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: ProcessID
+    Value: 8376
+    DefaultValue: ''
+    Description: The Process ID of the process to enumerate.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 105
