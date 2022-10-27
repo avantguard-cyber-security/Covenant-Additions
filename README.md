@@ -8,8 +8,12 @@ For more information, use `help <task>` in Covenant.
 ### FindCLRProcess
 Enumerate through all running processes to find those that have a CLR loaded.  
 
+![grafik](https://user-images.githubusercontent.com/89834884/198219933-3fee96d2-bc3a-458c-a4c5-2af0d0d0e6fb.png)
+
 ### FindProcessWithDll
 Enumerate through all running processes to find those that have the required DLL loaded.
+
+
 
 ### ListExports
 List all the exports of a DLL loaded in the current process.  
