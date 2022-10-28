@@ -8,21 +8,37 @@ For more information, use `help <task>` in Covenant.
 ### FindCLRProcess
 Enumerate through all running processes to find those that have a CLR loaded.  
 
-![grafik](https://user-images.githubusercontent.com/89834884/198219933-3fee96d2-bc3a-458c-a4c5-2af0d0d0e6fb.png)
+![grafik](images/FindCLRProcess_example.PNG)
+
+![grafik](images/FindCLRProcess_help.PNG)
 
 ### FindProcessWithDll
 Enumerate through all running processes to find those that have the required DLL loaded.
 
+![grafik](images/FindProcessWithDll_example.PNG)
 
+![grafik](images/FindProcessWithDll_help.PNG)
 
 ### ListExports
 List all the exports of a DLL loaded in the current process.  
 
+![grafik](images/ListExports_example.PNG)
+
+![grafik](images/ListExports_help.PNG)
+
 ### ListModules
 Enumerates the loaded modules of a specified process.  
 
+![grafik](images/ListModules_example.PNG)
+
+![grafik](images/ListModules_help.PNG)
+
 ### ListThreads
 Enumerates threads and their states in a specified process.  
+
+![grafik](images/ListThreads_example.PNG)
+
+![grafik](images/ListThreads_help.PNG)
 
 ## Modified Tasks
 We edited some existing tasks to better suit our needs.  
