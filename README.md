@@ -46,4 +46,10 @@ We edited some existing tasks to better suit our needs.
 ### Rubeus
 Updated the task to allow Rubeus to be upgraded to version 2.2.0 (see this [blog post](https://avantguard.io/en/blog/how-to-update-rubeus-in-covenant) for more information).  
 ### ProcessList
-Will allow to filter the output in a `grep` style. The formatting of the filtered output is still a bit wonky, will be added soon.
+Now allows filtering the output in a `grep` style with the optional parameter `SearchString`. If the parameter is left empty, the default output (all running processes) will be returned.  
+
+![grafik](images/ProcessList_example_1.PNG)
+
+All strings of the output can be matched, so it is also possible to filter for specific PIDs, PPIDs, owners, paths etc. The following screenshot takes the PPID of the previously identified `notepad` process to search for the parent process and its other child processes.
+
+![grafik](images/ProcessList_example_2.PNG)
