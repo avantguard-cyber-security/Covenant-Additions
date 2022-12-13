@@ -1,0 +1,64 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: ProcessWatcher
+  Aliases: []
+  Description: Continuously watches new process creation events and notifies the operator.
+  Help: >-
+    Requires administrative privileges. Uses WMI to track new process creation events and returns the PID, name, owner and command line arguments for the process.
+
+
+    Credits: https://github.com/malcomvetter/WMIProcessWatcher
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net35
+  - Net40
+  Code: "using System;\nusing System.IO;\nusing System.Text;\nusing System.Timers;\nusing System.Diagnostics;\nusing System.Collections.Generic;\nusing Forms = System.Windows.Forms;\nusing System.Management;\n\npublic static class Task\n{\n    public static Stream OutputStream { get; set; }\n    public static string Execute(string Time = \"0\")\n    {\n        try\n        {\n            TextWriter realStdOut = Console.Out;\n            TextWriter realStdErr = Console.Error;\n            StreamWriter stdOutWriter = new StreamWriter(OutputStream);\n            StreamWriter stdErrWriter = new StreamWriter(OutputStream);\n            stdOutWriter.AutoFlush = true;\n            stdErrWriter.AutoFlush = true;\n            Console.SetOut(stdOutWriter);\n            Console.SetError(stdErrWriter);\n\n            int time = int.Parse(Time);\n\n\n            string output = WaitForProcess(time);\n\n            Console.Out.Flush();\n            Console.Error.Flush();\n            Console.SetOut(realStdOut);\n            Console.SetError(realStdErr);\n            \n            OutputStream.Close();\n\n            return \"\";\n        }\n        catch (Exception e)\n        {\n          if (OutputStream != null)\n          {\n            OutputStream.Close();\n          }\n          return e.GetType().FullName + \": \" + e.Message + Environment.NewLine + e.StackTrace;\n        }\n    }\n\n    static String WaitForProcess(int time)\n    {\n        Console.WriteLine(String.Format(\"Starting ProcessWatcher for {0} seconds.\\n\\nPID    | Name                      | Owner                     | CommandLine\\n\" \n        + \"--------------------------------------------------------------------------------------------------\", time));\n\n        ManagementEventWatcher startWatch = new ManagementEventWatcher(new WqlEventQuery(\"SELECT * FROM Win32_ProcessStartTrace\"));\n        startWatch.EventArrived += new EventArrivedEventHandler(startWatch_EventArrived);\n        startWatch.Start();\n\n        if (time <= 0)\n        {\n            Forms.Application.Run();\n        }\n        else\n        {\n            using (Timer timer = new Timer(time * 1000))\n            {\n                timer.Elapsed += (source, e) =>\n                {\n                    Console.WriteLine(String.Format(\"\\r\\nFinished ProcessWatcher at {0:HH:mm:ss.fff}\", DateTime.Now));\n                    timer.Stop();\n                    startWatch.Stop();\n                    Forms.Application.Exit();\n                };\n                timer.Start();\n                Forms.Application.Run();\n            }\n        }\n        return \"\";\n    }\n\n    static void startWatch_EventArrived(object sender, EventArrivedEventArgs e)\n    {\n        var proc = GetProcessInfo(e);\n        Console.WriteLine(proc.PID.ToString().PadRight(7) + \"| \" + proc.ProcessName.PadRight(26) + \"| \" + proc.User.PadRight(26) + \"| \" + proc.CommandLine);\n    }\n\n    static ProcessInfo GetProcessInfo(EventArrivedEventArgs e)\n    {\n        var p = new ProcessInfo();\n        var pid = 0;\n        int.TryParse(e.NewEvent.Properties[\"ProcessID\"].Value.ToString(), out pid);\n        p.PID = pid;\n        p.ProcessName = e.NewEvent.Properties[\"ProcessName\"].Value.ToString();\n        try\n        {\n            using (var searcher = new ManagementObjectSearcher(\"SELECT * FROM Win32_Process WHERE ProcessId = \" + pid))\n            using (var results = searcher.Get())\n            {\n                foreach (ManagementObject result in results)\n                {\n                    try\n                    {\n                        p.CommandLine += result[\"CommandLine\"].ToString() + \" \";\n                    }\n                    catch { }\n                    try\n                    {\n                        var user = result.InvokeMethod(\"GetOwner\", null, null);\n                        p.UserDomain = user[\"Domain\"].ToString();\n                        p.UserName = user[\"User\"].ToString();\n                    }\n                    catch { }                        \n                }\n            }\n            if (!string.IsNullOrEmpty(p.CommandLine))\n            {\n                p.CommandLine = p.CommandLine.Trim();\n            }\n        } catch (ManagementException) { }\n        return p;\n    }\n\n    internal class ProcessInfo\n    {\n        public string ProcessName { get; set; }\n        public int PID { get; set; }\n        public string CommandLine { get; set; }\n        public string UserName { get; set; }\n        public string UserDomain { get; set; }\n        public string User\n        {\n            get\n            {\n                if (string.IsNullOrEmpty(UserName))\n                {\n                    return \"\";\n                }\n                if (string.IsNullOrEmpty(UserDomain))\n                {\n                    return UserName;\n                }\n                return string.Format(\"{0}\\\\{1}\", UserDomain, UserName);\n            }\n        }\n    }\n}\n"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Windows.Forms.dll
+    Location: net35/System.Windows.Forms.dll
+    DotNetVersion: Net35
+  - Name: System.Management.dll
+    Location: net35/System.Management.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Windows.Forms.dll
+    Location: net40/System.Windows.Forms.dll
+    DotNetVersion: Net40
+  - Name: System.Management.dll
+    Location: net40/System.Management.dll
+    DotNetVersion: Net40
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: Time
+    Value: 60
+    DefaultValue: 60
+    Description: Specifies the number of seconds to run the watcher for.
+    SuggestedValues: []
+    Optional: true
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 118
