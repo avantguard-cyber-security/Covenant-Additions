@@ -1,0 +1,64 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: SecurityWatcher
+  Aliases: []
+  Description: Continuously watches new security events and notifies the operator.
+  Help: >-
+    Requires administrative privileges. Uses the Windows Event Log to track new Security events and returns information about it.
+
+
+    Credits: https://github.com/malcomvetter/WhoDis
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net35
+  - Net40
+  Code: "using System;\nusing System.IO;\nusing System.Text;\nusing System.Timers;\nusing System.Diagnostics;\nusing System.Collections.Generic;\nusing Forms = System.Windows.Forms;\nusing System.Management;\n\npublic static class Task\n{\n    public static Stream OutputStream { get; set; }\n    public static string Execute(string Time = \"0\")\n    {\n        try\n        {\n            TextWriter realStdOut = Console.Out;\n            TextWriter realStdErr = Console.Error;\n            StreamWriter stdOutWriter = new StreamWriter(OutputStream);\n            StreamWriter stdErrWriter = new StreamWriter(OutputStream);\n            stdOutWriter.AutoFlush = true;\n            stdErrWriter.AutoFlush = true;\n            Console.SetOut(stdOutWriter);\n            Console.SetError(stdErrWriter);\n\n            int time = int.Parse(Time);\n\n            string output = SetupListener(time);\n\n            Console.Out.Flush();\n            Console.Error.Flush();\n            Console.SetOut(realStdOut);\n            Console.SetError(realStdErr);\n            \n            OutputStream.Close();\n\n            return \"\";\n        }\n        catch (Exception e)\n        {\n          if (OutputStream != null)\n          {\n            OutputStream.Close();\n          }\n          return e.GetType().FullName + \": \" + e.Message + Environment.NewLine + e.StackTrace;\n        }\n    }\n\n    static String SetupListener(int time)\n    {\n        Console.WriteLine(String.Format(\"Starting SecurityWatcher for {0} seconds.\\n\\nEventID | Domain\\\\User                   | Summary\\n\" \n        + \"----------------------------------------------------------------------------------------\", time));\n        \n        var log = new EventLog(\"Security\");\n        log.EntryWritten += listener;\n        log.EnableRaisingEvents = true;\n\n        if (time <= 0)\n        {\n            Forms.Application.Run();\n        }\n        else\n        {\n            using (Timer timer = new Timer(time * 1000))\n            {\n                timer.Elapsed += (source, e) =>\n                {\n                    Console.WriteLine(String.Format(\"\\r\\nFinished SecurityWatcher at {0:HH:mm:ss.fff}\", DateTime.Now));\n                    timer.Stop();\n                    Forms.Application.Exit();\n                };\n                timer.Start();\n                Forms.Application.Run();\n                log.EntryWritten -= listener;\n            }\n        }\n        return \"\";\n    }\n\n    static void listener(object sender, EntryWrittenEventArgs e)\n    {\n        try\n        { \n            using (var reader = new StringReader(e.Entry.Message))\n            {\n                var line = \"\";\n                var user = \"\";\n                var domain = \"\";\n                var summary = \"\";\n                do\n                {\n                    line = reader.ReadLine();\n                    if (string.IsNullOrEmpty(line)) continue;\n                    if (string.IsNullOrEmpty(summary))\n                    {\n                        summary = line;\n                    }\n                    var l = line.TrimStart().Trim();\n                    if (string.IsNullOrEmpty(user) && l.ToLower().Contains(\"account name\"))\n                    {\n                        var parts = l.Split('\\t');\n                        user = parts[parts.Length - 1];\n                    }\n                    if (string.IsNullOrEmpty(domain) && l.ToLower().Contains(\"account domain\"))\n                    {\n                        var parts = l.Split('\\t');\n                        domain = parts[parts.Length - 1];\n                    }\n                } while (line != null);\n                String fullUser = domain + \"\\\\\" + user;\n                Console.WriteLine(e.Entry.InstanceId.ToString().PadRight(8) + \"| \" + fullUser.PadRight(30) + \"| \" + summary);\n            }\n        }\n        catch (Exception ex)\n        {\n            Console.WriteLine(ex);\n        }\n    }\n}\n"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Windows.Forms.dll
+    Location: net35/System.Windows.Forms.dll
+    DotNetVersion: Net35
+  - Name: System.Management.dll
+    Location: net35/System.Management.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Windows.Forms.dll
+    Location: net40/System.Windows.Forms.dll
+    DotNetVersion: Net40
+  - Name: System.Management.dll
+    Location: net40/System.Management.dll
+    DotNetVersion: Net40
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: Time
+    Value: 60
+    DefaultValue: 60
+    Description: Specifies the number of seconds to run the watcher for.
+    SuggestedValues: []
+    Optional: true
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 119
