@@ -1,0 +1,39 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: ListOpenWindows
+  Aliases: []
+  Description: Lists the titles of all open windows.
+  Help: 
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net35
+  - Net40
+  Code: "using System;\nusing System.Diagnostics;\n\npublic static class Task\n{\n    public static string Execute()\n    {\n        string output = \"PID    | ProcessName            | WindowTitle                        \\n---------------------------------------------------------------------\\n\";\n        try\n        {\n            Process[] processlist = Process.GetProcesses();\n        \n            foreach (Process process in processlist)\n            {\n                if (!String.IsNullOrEmpty(process.MainWindowTitle))\n                {\n                    output += process.Id.ToString().PadRight(7) + \"| \" + process.ProcessName.ToString().PadRight(22) + \" | \" + process.MainWindowTitle + \"\\n\";\n                }\n            }\n            return output;\n        }\n        catch (Exception e) { return e.GetType().FullName + \": \" + e.Message + Environment.NewLine + e.StackTrace; }\n    }\n}"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options: []
