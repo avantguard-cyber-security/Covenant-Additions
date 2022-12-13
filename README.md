@@ -33,12 +33,33 @@ Enumerates the loaded modules of a specified process.
 
 ![grafik](images/ListModules_help.PNG)
 
+### ListOpenWindows
+Lists the titles of all open windows. There are some exceptions when the main window is hidden (such as explorer.exe).  
+
+![grafik](images/ListOpenWindows_example.PNG)
+
+![grafik](images/ListOpenWindows_help.PNG)
+
 ### ListThreads
 Enumerates threads and their states in a specified process.  
 
 ![grafik](images/ListThreads_example.PNG)
 
 ![grafik](images/ListThreads_help.PNG)
+
+### ProcessWatcher
+Continuously watches new process creation events and notifies the operator.  
+
+![grafik](images/ProcessWatcher_example.PNG)
+
+![grafik](images/ProcessWatcher_help.PNG)
+
+### SecurityWatcher
+Continuously watches new security events and notifies the operator.  
+
+![grafik](images/SecurityWatcher_example.PNG)
+
+![grafik](images/SecurityWatcher_help.PNG)
 
 ## Modified Tasks
 We edited some existing tasks to better suit our needs.  
