@@ -1,0 +1,100 @@
+﻿@inherits OwningComponentBase<ICovenantService>
+@implements IDisposable
+
+@using System.IO
+@using System.Collections.Generic
+@using Microsoft.JSInterop
+
+@using Covenant.Core
+@using Covenant.Models.Listeners
+@using Covenant.Components.Shared
+@using Covenant.Models.Covenant
+@inject IJSRuntime IJSRuntime
+@inject INotificationService INotificationService
+
+<CovenantTable TItem="string" Items="Logs.Reverse().ToList()" SearchRow="IsRowDisplayed"
+               IsSearchable="IsSearchable" IsSortable="IsSortable" IsPaginated="IsPaginated" PageLength="PageLength" class="table table-hover">
+    <TableHeader>
+        <th class="pl-1 pr-1">
+            <div class="d-flex flex-nowrap">
+                Log (from log file: @LogFile)
+                <a @onclick=@Refresh style="align:right; margin: 0 0 0 auto; cursor: pointer"><span class="fe fe-refresh-cw"></span></a>
+            </div>
+        </th>
+    </TableHeader>
+    <TableRow Context="log">
+        <tr>
+            <td>@log</td>
+        </tr>
+    </TableRow>
+</CovenantTable>
+
+@code {
+    [Parameter]
+    public IEnumerable<string> Logs { get; set; }
+
+    [Parameter]
+    public string LogFile { get; set; }
+
+    [Parameter]
+    public bool IsSearchable { get; set; } = false;
+
+    [Parameter]
+    public bool IsSortable { get; set; } = false;
+
+    [Parameter]
+    public bool IsPaginated { get; set; } = true;
+
+    [Parameter]
+    public int PageLength { get; set; } = 25;
+    
+    protected override async Task OnInitializedAsync()
+    {
+        this.INotificationService.OnCreateEvent += OnCreateEvent;
+        
+        if (File.Exists(this.LogFile))
+        {
+            this.Logs = this.Logs ?? File.ReadLines(this.LogFile);
+        }
+        this.Logs = this.Logs ?? new List<string>();
+    }
+    
+    public void Dispose()
+    {
+        this.INotificationService.OnCreateEvent -= OnCreateEvent;
+    }
+    
+    private void OnCreateEvent(object sender, Event anEvent)
+    {
+        if (anEvent.Type == EventType.WebLog)
+        {
+            this.InvokeAsync(() => this.StateHasChanged());
+        }
+    }
+    
+    protected override void OnInitialized()
+    {
+        
+        if (File.Exists(this.LogFile))
+        {
+            this.Logs = this.Logs ?? File.ReadLines(this.LogFile);
+        }
+        this.Logs = this.Logs ?? new List<string>();
+    }
+
+    private string ToString(List<string> list)
+    {
+        return string.Join(",", list);
+    }
+
+    private bool IsRowDisplayed(string log, string SearchTerm)
+    {
+        return SearchTerm == string.Empty ||
+            log.Contains(SearchTerm, StringComparison.CurrentCultureIgnoreCase);
+    }
+    
+    private void Refresh()
+    {
+        this.StateHasChanged();
+    }
+}
