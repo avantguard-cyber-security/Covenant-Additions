@@ -54,6 +54,13 @@ Continuously watches new process creation events and notifies the operator.
 
 ![grafik](images/ProcessWatcher_help.PNG)
 
+### RunPE
+Reflective loader for unmanaged binaries.  
+
+![grafik](images/runpe_example_1.PNG)
+
+![grafik](images/runpe_example_1.PNG)
+
 ### SecurityWatcher
 Continuously watches new security events and notifies the operator.  
 
