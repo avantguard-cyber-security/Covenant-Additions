@@ -1,5 +1,5 @@
 # Covenant-Additions
-Some of our additions and modifications for the open source C2 framework [Covenant](https://github.com/cobbr/Covenant/tree/dev) by @cobbr.
+Some of our additions and modifications for the open source C2 framework [Covenant](https://github.com/cobbr/Covenant/tree/dev) by @cobbr. These additions are meant to be used with the **dev** branch of Covenant. They have not been tested on the master branch.
 
 ## New Tasks
 We added some new tasks that have proven to be helpful in our recent work with Covenant. The new tasks are inspired by functionality offered in closed source C2s (mainly [BRc4](https://bruteratel.com/)) and are focused around enumeration of processes and their modules, threads, etc.  
