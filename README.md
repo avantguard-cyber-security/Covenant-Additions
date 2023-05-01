@@ -5,6 +5,11 @@ Some of our additions and modifications for the open source C2 framework [Covena
 We added some new tasks that have proven to be helpful in our recent work with Covenant. The new tasks are inspired by functionality offered in closed source C2s (mainly [BRc4](https://bruteratel.com/)) and are focused around enumeration of processes and their modules, threads, etc.  
 For more information, use `help <task>` in Covenant.
 
+### CopyTimestampFromFile
+Copies the CreationTime and LastWriteTime values from one file to another.
+
+![grafik](images/CopyTimestampFromFile_example.PNG)
+
 ### FindCLRProcess
 Enumerate through all running processes to find those that have a CLR loaded.  
 
@@ -67,6 +72,11 @@ Continuously watches new security events and notifies the operator.
 ![grafik](images/SecurityWatcher_example.PNG)
 
 ![grafik](images/SecurityWatcher_help.PNG)
+
+### SetTimestampOnFile
+Sets the CreationTime and LastWriteTime values on a target file.
+
+![grafik](images/SetTimestampOnFile_example.PNG)
 
 ## Modified Tasks
 We edited some existing tasks to better suit our needs.  
