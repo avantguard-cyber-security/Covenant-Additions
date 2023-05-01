@@ -1,0 +1,60 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: SetTimestampOnFile
+  Aliases: []
+  Description: Sets the CreationTime and LastWriteTime values on a target file.
+  Help: >-
+    Timestamps have to be in the form of: 2017-08-18T07:22:16
+
+
+    Credit goes to: https://github.com/kafkaesqu3/SharpStomp
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net40
+  Code: "using System;\nusing System.IO;\n\npublic static class Task\n{\n    public static string Execute(string targetfile, string createTimestamp, string modifyTimestamp)\n    {\n        try\n        {\n            if (!File.Exists(targetfile))\n            {\n                return $\"Cannot find {targetfile}\";\n            }\n            \n            DateTime parsedCreate = new DateTime();\n            DateTime parsedModify = new DateTime();\n            \n            try\n            {\n                parsedCreate = DateTime.Parse(createTimestamp);\n                parsedModify = DateTime.Parse(modifyTimestamp);\n            } \n            catch (Exception e)\n            {\n                return $\"Error parsing timestamps into objects: {e.Message}\";\n            }\n\n            File.SetCreationTimeUtc(targetfile, parsedCreate);\n            File.SetLastWriteTimeUtc(targetfile, parsedModify);\n\n            return $\"Successfully set timestamp values on {targetfile}.\";\n        } \n        catch (Exception e) { return $\"Error setting timestamp on {new FileInfo(targetfile).FullName}: {e.Message}\"; }\n    }\n}\n"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: targetfile
+    Value: test.txt
+    DefaultValue: ''
+    Description: Path of the file to be modified.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 107
+  - Name: createTimestamp
+    Value: 2017-08-18T07:22:16
+    DefaultValue: ''
+    Description: The timestamp for the CreationTime value.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 107
+  - Name: modifyTimestamp
+    Value: 2018-08-18T07:22:16
+    DefaultValue: ''
+    Description: The timestamp for the LastWriteTime value.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 107

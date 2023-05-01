@@ -1,0 +1,47 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: CopyTimestampFromFile
+  Aliases: []
+  Description: Copies the CreationTime and LastWriteTime values from one file to another.
+  Help: 'Credit goes to: https://github.com/kafkaesqu3/SharpStomp'
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net40
+  Code: "using System;\nusing System.IO;\n\npublic static class Task\n{\n    public static string Execute(string toPath, string fromPath)\n    {\n        try\n        {\n            if (!File.Exists(toPath))\n            {\n                return $\"Cannot find {toPath}\";\n            }\n\n            if (!File.Exists(fromPath))\n            {\n                return $\"Cannot find {fromPath}\";\n            }\n            \n            DateTime creationTime = File.GetCreationTime(fromPath);\n            DateTime modifyTime = File.GetLastWriteTime(fromPath);\n\n            File.SetCreationTimeUtc(toPath, creationTime);\n            File.SetLastWriteTimeUtc(toPath, modifyTime);\n\n            return $\"Successfully copied timestamp values from {fromPath} to {toPath}.\";\n        } \n        catch (Exception e) { return $\"Error copying timestamp from {fromPath} to {toPath}: {e.Message}\"; }\n    }\n}"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Core.dll
+    Location: net40/System.Core.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: toPath
+    Value: test.txt
+    DefaultValue: ''
+    Description: Path of the file to be modified.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 106
+  - Name: fromPath
+    Value: Program.cs
+    DefaultValue: ''
+    Description: Path of the file the timestamps are copied from.
+    SuggestedValues: []
+    Optional: false
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 106
