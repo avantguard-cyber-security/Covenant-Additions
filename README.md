@@ -24,6 +24,22 @@ Enumerate through all running processes to find those that have the required DLL
 
 ![grafik](images/FindProcessWithDll_help.PNG)
 
+### ListDevices
+List the devices present on a system, allows filtering.
+
+![grafik](images/ListDevices_example_1.PNG)
+
+![grafik](images/ListDevices_example_2.PNG)
+
+![grafik](images/ListDevices_help.PNG)
+
+### ListDrives
+Lists the local drives on a system, including removable drives.
+
+![grafik](images/ListDrives_example.PNG)
+
+![grafik](images/ListDrives_help.PNG)
+
 ### ListExports
 List all the exports of a DLL loaded in the current process.  
 
