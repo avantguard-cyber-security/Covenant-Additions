@@ -1,0 +1,52 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: ListDrives
+  Aliases: []
+  Description: Lists the local drives on a system, including removable drives.
+  Help: Uses System.IO.DriveInfo.GetDrives() to list local drives. No additional arguments are supported.
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net40
+  Code: >-
+    using System;
+
+    using System.IO;
+
+
+    public static class Task
+
+    {
+        public static string Execute()
+        {
+            string output = "Enumerated Drives:" + Environment.NewLine + "------------------" + Environment.NewLine + Environment.NewLine;
+            try
+            {
+                foreach (DriveInfo drive in DriveInfo.GetDrives())
+                {
+                    output += "Drive " + drive.Name + Environment.NewLine + "  Drive type: " + drive.DriveType + Environment.NewLine;
+                    if (drive.IsReady == true)
+                    {
+                        output += "  Volume Label: " + drive.VolumeLabel + Environment.NewLine;
+                    }
+                }
+                return output;
+            }
+            catch (Exception e) { return $"Error enumerating drives: {e.Message}"; }
+        }
+    }
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options: []

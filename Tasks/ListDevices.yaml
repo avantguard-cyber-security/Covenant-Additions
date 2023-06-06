@@ -1,0 +1,38 @@
+- Author:
+    Name: Jann
+    Handle: '@jannlemm0913'
+    Link: https://avantguard.io
+  Name: ListDevices
+  Aliases: []
+  Description: List the devices present on a system, allows filtering.
+  Help: Uses System.Management.ManagementObjectSearcher to select all entries from Win32_PnPEntity. Filtering will only include entries whose DeviceID starts with the filter string. An example could be the filter query "USB".
+  Language: CSharp
+  CompatibleDotNetVersions:
+  - Net40
+  Code: "using System;\nusing System.IO;\nusing System.Collections.Generic;\nusing System.Management; // need to add System.Management to your project references.\n\npublic static class Task\n{\n    public static string Execute(string FilterString)\n    {\n        string output = \"Enumerated Devices:\" + Environment.NewLine + \"-------------------\" + Environment.NewLine + Environment.NewLine;\n        try\n        {\n            ManagementObjectCollection collection;\n            using (var searcher = new ManagementObjectSearcher(\"SELECT * FROM Win32_PnPEntity where DeviceID Like \\\"\" + FilterString + \"%\\\"\"))\n              collection = searcher.Get();\n            \n            foreach (var device in collection)\n            {\n                output += \"Device ID: \" + (string)device.GetPropertyValue(\"DeviceID\") + \n                \", PNP Device ID: \" + (string)device.GetPropertyValue(\"PNPDeviceID\") +\n                \", Description: \" + (string)device.GetPropertyValue(\"Description\") + Environment.NewLine;\n            }\n\n            collection.Dispose();\n\n            return output;\n        }\n        catch (Exception e) { return $\"Error enumerating devices: {e.Message}\"; }\n    }\n}"
+  Compiled: false
+  TaskingType: Assembly
+  ReferenceSourceLibraries: []
+  ReferenceAssemblies:
+  - Name: System.Management.dll
+    Location: net40/System.Management.dll
+    DotNetVersion: Net40
+  - Name: System.dll
+    Location: net40/System.dll
+    DotNetVersion: Net40
+  - Name: mscorlib.dll
+    Location: net40/mscorlib.dll
+    DotNetVersion: Net40
+  EmbeddedResources: []
+  UnsafeCompile: false
+  TokenTask: false
+  Options:
+  - Name: Filter
+    Value: USB
+    DefaultValue: ''
+    Description: Filter the output for specific device types.
+    SuggestedValues: []
+    Optional: true
+    DisplayInCommand: true
+    FileOption: false
+    GruntTaskId: 109
